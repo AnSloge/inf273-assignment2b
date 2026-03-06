@@ -1,0 +1,9 @@
+Instance name,Method,Average objective,Best objective,Improvement (%),Average running time (in seconds)
+F_10,Random Search,1784.3,1595.0,48.9,0.427
+F_20,Random Search,7412.4,6930.0,32.0,0.612
+F_50,Random Search,54167.9,51934.0,30.3,1.081
+F_100,Random Search,234689.9,224114.0,13.9,2.042
+R_10,Random Search,960.3,756.0,70.5,0.454
+R_20,Random Search,6545.8,6139.0,33.2,0.595
+R_50,Random Search,51731.0,49283.0,30.6,1.053
+R_100,Random Search,229236.6,223458.0,18.1,1.851

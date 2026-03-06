@@ -1,0 +1,8 @@
+Instance: R_20
+Method: Simulated Annealing-1-reinsert
+Best objective: 2333.0
+Post-run structural feasible: True
+Post-run hover feasible: True
+Post-run objective match: True
+Post-run recalculated objective: 2333.0
+Best solution string: 0,3,20,12,2,9,18,1,14,16,7,0|10,13,4,11,8,15,-1,19,17,5,6|1,3,4,6,8,10,-1,1,3,5,7|3,4,6,8,10,11,-1,3,4,7,12

@@ -1,0 +1,8 @@
+Instance: R_20
+Method: Local Search-1-reinsert
+Best objective: 2688.0
+Post-run structural feasible: True
+Post-run hover feasible: True
+Post-run objective match: True
+Post-run recalculated objective: 2688.0
+Best solution string: 0,10,3,5,17,2,18,1,6,16,15,19,13,0|14,12,11,7,-1,9,4,8,20|1,4,6,8,-1,1,4,9,12|4,6,7,14,-1,4,5,10,14
