@@ -3,11 +3,16 @@
 
 import csv
 import random
+import sys
 import time
 from pathlib import Path
 
-from FeasibilityCheck import SolutionFeasibility
-from CalCulateTotalArrivalTime import CalCulateTotalArrivalTime
+ROOT_DIR = Path(__file__).resolve().parents[3]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
+from common.feasibility_check import SolutionFeasibility
+from common.calculate_total_arrival_time import CalCulateTotalArrivalTime
 
 
 def read_instance(path: str) -> dict:
@@ -248,9 +253,11 @@ def run_brs(instance_path: str, runs: int = 10, iters: int = 10000, seed: int = 
 
 
 def main() -> None:
-    base = Path(__file__).resolve().parent
-    data_dir = base / "Data"
-    solutions_dir = base / "solutions"
+    assignment_dir = Path(__file__).resolve().parent.parent
+    data_dir = assignment_dir / "data"
+    results_dir = assignment_dir / "results"
+    solutions_dir = results_dir / "solutions"
+    results_dir.mkdir(exist_ok=True)
     solutions_dir.mkdir(exist_ok=True)
 
     instance_files = [
@@ -287,7 +294,7 @@ def main() -> None:
             file_handle.write(f"Average running time (s): {result['avg_time']:.3f}\n")
             file_handle.write(f"Best solution string: {to_solution_string(result['best_solution'])}\n")
 
-    csv_path = base / "results_2b.csv"
+    csv_path = results_dir / "results_2b.csv"
     with open(csv_path, "w", newline="", encoding="utf-8") as file_handle:
         writer = csv.writer(file_handle)
         writer.writerow(

@@ -1,22 +1,20 @@
 #!/usr/bin/env python3
-"""INF273 Assignment 3 - Simulated Annealing with 1-reinsert operator."""
+"""INF273 Assignment 3 - Local Search with 1-reinsert operator."""
 
 import argparse
 import csv
-import math
 import random
 import sys
 import time
 from copy import deepcopy
 from pathlib import Path
-from statistics import mean
 
-ROOT_DIR = Path(__file__).resolve().parent.parent
+ROOT_DIR = Path(__file__).resolve().parents[3]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-from FeasibilityCheck import SolutionFeasibility
-from CalCulateTotalArrivalTime import CalCulateTotalArrivalTime
+from common.feasibility_check import SolutionFeasibility
+from common.calculate_total_arrival_time import CalCulateTotalArrivalTime
 
 
 def read_instance(path: str) -> dict:
@@ -163,66 +161,18 @@ def one_reinsert(data: dict, solution: dict, rng: random.Random) -> dict:
     return new_solution
 
 
-def run_simulated_annealing(data: dict, rng: random.Random, warmup_iters: int = 100, main_iters: int = 9900, final_temp: float = 0.1) -> tuple[dict, float, float]:
-    incumbent = initial_solution(data)
-    incumbent_objective = evaluate(data, incumbent)
+def run_local_search(data: dict, rng: random.Random, iterations: int = 10000) -> tuple[dict, float, float]:
+    best_solution = initial_solution(data)
+    best_objective = evaluate(data, best_solution)
 
-    best_solution = deepcopy(incumbent)
-    best_objective = incumbent_objective
-
-    warmup_deltas = []
     started = time.perf_counter()
-
-    for _ in range(warmup_iters):
-        new_solution = one_reinsert(data, incumbent, rng)
-        if not is_valid(data, new_solution):
-            continue
-
-        new_objective = evaluate(data, new_solution)
-        delta = new_objective - incumbent_objective
-
-        if delta < 0:
-            incumbent = new_solution
-            incumbent_objective = new_objective
-            if incumbent_objective < best_objective:
-                best_solution = deepcopy(incumbent)
-                best_objective = incumbent_objective
-        else:
-            if rng.random() < 0.8:
-                incumbent = new_solution
-                incumbent_objective = new_objective
-            warmup_deltas.append(delta)
-
-    delta_avg = mean(warmup_deltas) if warmup_deltas else 1.0
-    t0 = -delta_avg / math.log(0.8)
-    if not math.isfinite(t0) or t0 <= 0:
-        t0 = 1.0
-
-    temperature = t0
-    alpha = (final_temp / t0) ** (1.0 / max(main_iters, 1))
-
-    for _ in range(main_iters):
-        new_solution = one_reinsert(data, incumbent, rng)
-        if not is_valid(data, new_solution):
-            temperature = alpha * temperature
-            continue
-
-        new_objective = evaluate(data, new_solution)
-        delta = new_objective - incumbent_objective
-
-        if delta < 0:
-            incumbent = new_solution
-            incumbent_objective = new_objective
-            if incumbent_objective < best_objective:
-                best_solution = deepcopy(incumbent)
-                best_objective = incumbent_objective
-        else:
-            acceptance_probability = math.exp(-delta / max(temperature, 1e-12))
-            if rng.random() < acceptance_probability:
-                incumbent = new_solution
-                incumbent_objective = new_objective
-
-        temperature = alpha * temperature
+    for _ in range(iterations):
+        new_solution = one_reinsert(data, best_solution, rng)
+        if is_valid(data, new_solution):
+            new_objective = evaluate(data, new_solution)
+            if new_objective < best_objective:
+                best_solution = new_solution
+                best_objective = new_objective
 
     elapsed = time.perf_counter() - started
     return best_solution, best_objective, elapsed
@@ -262,24 +212,22 @@ def validate_post_run(data: dict, solution: dict, expected_objective: float) -> 
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="INF273 Assignment 3 - Simulated Annealing")
+    parser = argparse.ArgumentParser(description="INF273 Assignment 3 - Local Search")
     parser.add_argument("--runs", type=int, default=10)
-    parser.add_argument("--warmup-iters", type=int, default=100)
-    parser.add_argument("--iters", type=int, default=9900)
-    parser.add_argument("--final-temp", type=float, default=0.1)
+    parser.add_argument("--iters", type=int, default=10000)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--instances", nargs="*", default=["F_10", "F_20", "F_50", "F_100", "R_10", "R_20", "R_50", "R_100"])
     args = parser.parse_args()
 
-    base = Path(__file__).resolve().parent.parent
-    data_dir = base / "Data"
-    out_dir = base / "assignment3"
+    assignment_dir = Path(__file__).resolve().parent.parent
+    data_dir = assignment_dir / "data"
+    out_dir = assignment_dir / "results"
     solutions_dir = out_dir / "solutions"
     out_dir.mkdir(exist_ok=True)
     solutions_dir.mkdir(exist_ok=True)
 
     print("=" * 70)
-    print("INF273 Assignment 3 - Simulated Annealing (1-reinsert)")
+    print("INF273 Assignment 3 - Local Search (1-reinsert)")
     print("=" * 70)
 
     rows = []
@@ -304,13 +252,7 @@ def main() -> None:
 
         for run_idx in range(args.runs):
             rng = random.Random(args.seed + run_idx)
-            solution, objective_value, elapsed = run_simulated_annealing(
-                data,
-                rng,
-                warmup_iters=args.warmup_iters,
-                main_iters=args.iters,
-                final_temp=args.final_temp,
-            )
+            solution, objective_value, elapsed = run_local_search(data, rng, iterations=args.iters)
             run_objs.append(objective_value)
             run_times.append(elapsed)
             if objective_value < best_obj:
@@ -326,7 +268,7 @@ def main() -> None:
 
         rows.append({
             "instance": instance_name,
-            "method": "Simulated Annealing-1-reinsert",
+            "method": "Local Search-1-reinsert",
             "avg": avg_obj,
             "best": best_obj,
             "improvement": improvement,
@@ -346,10 +288,10 @@ def main() -> None:
             f"(structural={structural_ok}, hover={hover_ok}, objective_match={objective_match})"
         )
 
-        instance_solution_path = solutions_dir / f"{instance_name}_simulated_annealing_best.txt"
+        instance_solution_path = solutions_dir / f"{instance_name}_local_search_best.txt"
         with open(instance_solution_path, "w", encoding="utf-8") as file_handle:
             file_handle.write(f"Instance: {instance_name}\n")
-            file_handle.write("Method: Simulated Annealing-1-reinsert\n")
+            file_handle.write("Method: Local Search-1-reinsert\n")
             file_handle.write(f"Best objective: {best_obj:.1f}\n")
             file_handle.write(f"Post-run structural feasible: {structural_ok}\n")
             file_handle.write(f"Post-run hover feasible: {hover_ok}\n")
@@ -360,7 +302,7 @@ def main() -> None:
 
         print(f"  avg={avg_obj:.1f} best={best_obj:.1f} improv={improvement:.1f}% time={avg_time:.3f}s")
 
-    csv_path = out_dir / "results_simulated_annealing.csv"
+    csv_path = out_dir / "results_local_search.csv"
     with open(csv_path, "w", newline="", encoding="utf-8") as file_handle:
         writer = csv.writer(file_handle)
         writer.writerow(["Instance", "Method", "Average objective", "Best objective", "Improvement (%)", "Average running time (s)"])
@@ -374,7 +316,7 @@ def main() -> None:
                 f"{row['time']:.3f}",
             ])
 
-    sol_path = out_dir / "solutions_simulated_annealing.txt"
+    sol_path = out_dir / "solutions_local_search.txt"
     with open(sol_path, "w", encoding="utf-8") as file_handle:
         for instance_name, solution in best_by_instance.items():
             if solution is None:
@@ -389,7 +331,7 @@ def main() -> None:
         f"{'Improv(%)':>12} {'Avg time(s)':>14}"
     )
     for row in rows:
-        display_method = "Sim Annealing"
+        display_method = "Local Search"
         print(
             f"{row['instance']:<12} {display_method:<15} {row['avg']:>12.1f} "
             f"{row['best']:>12.1f} {row['improvement']:>12.1f} {row['time']:>14.3f}"
