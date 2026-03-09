@@ -3,5 +3,5 @@ Method: SA-new operators (tuned weights)
 Average objective: 639.6
 Best objective: 585.0
 Improvement (%): 77.2
-Average running time (s): 2.430
+Average running time (s): 2.788
 Best solution string: 0,2,4,8,5,1,0|10,6,-1,9,7,3|1,2,-1,2,4,5|2,7,-1,4,5,7
