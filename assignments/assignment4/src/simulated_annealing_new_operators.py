@@ -10,7 +10,7 @@ import time
 from copy import deepcopy
 from pathlib import Path
 from statistics import mean
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 ROOT_DIR = Path(__file__).resolve().parents[3]
 if str(ROOT_DIR) not in sys.path:
@@ -145,6 +145,35 @@ def evaluate(data: Dict[str, Any], solution: Solution, n_drones: int) -> float:
     return float(total_time)
 
 
+def score_solution(data: Dict[str, Any], solution: Solution, n_drones: int) -> float:
+    """Return objective value if feasible, otherwise +inf.
+
+    This computes feasibility and objective in one pass to avoid repeated checks.
+    """
+    parts_solution = convert_to_parts_format(solution, n_drones=n_drones)
+
+    checker = SolutionFeasibility(
+        n_nodes=data["n"],
+        n_drones=n_drones,
+        depot_index=0,
+        drone_times=data["D"],
+        flight_range=data["drone_limit"],
+    )
+    if not checker.is_solution_feasible(parts_solution):
+        return float("inf")
+
+    calculator = CalCulateTotalArrivalTime()
+    calculator.depot_index = 0
+    calculator.truck_times = data["T"]
+    calculator.drone_times = data["D"]
+    calculator.flight_range = data["drone_limit"]
+
+    total_time, _, _, hover_feasible = calculator.calculate_total_waiting_time(parts_solution)
+    if not hover_feasible:
+        return float("inf")
+    return float(total_time)
+
+
 def is_valid(data: Dict[str, Any], solution: Solution, n_drones: int) -> bool:
     parts_solution = convert_to_parts_format(solution, n_drones=n_drones)
 
@@ -198,16 +227,17 @@ def op1_critical_customer_relocate(data: Dict[str, Any], solution: Solution, rng
     stripped_route = base["route"]
 
     best_candidate = deepcopy(solution)
-    best_value = evaluate(data, best_candidate, n_drones=n_drones)
+    best_value = score_solution(data, best_candidate, n_drones=n_drones)
 
-    for insert_pos in range(1, len(stripped_route)):
+    positions = list(range(1, len(stripped_route)))
+    if len(positions) > 12:
+        positions = rng.sample(positions, 12)
+
+    for insert_pos in positions:
         candidate = deepcopy(base)
         candidate["route"].insert(insert_pos, chosen_customer)
 
-        if not is_valid(data, candidate, n_drones=n_drones):
-            continue
-
-        objective = evaluate(data, candidate, n_drones=n_drones)
+        objective = score_solution(data, candidate, n_drones=n_drones)
         if objective < best_value:
             best_value = objective
             best_candidate = candidate
@@ -220,7 +250,7 @@ def op2_truck_2opt_repair(
     solution: Solution,
     rng: random.Random,
     n_drones: int,
-    samples: int = 10,
+    samples: int = 6,
 ) -> Solution:
     """Sampled best 2-opt on the truck route with strict feasibility filtering."""
     base = deepcopy(solution)
@@ -230,7 +260,7 @@ def op2_truck_2opt_repair(
         return base
 
     best_candidate = deepcopy(solution)
-    best_value = evaluate(data, best_candidate, n_drones=n_drones)
+    best_value = score_solution(data, best_candidate, n_drones=n_drones)
 
     for _ in range(samples):
         i = rng.randint(1, len(route) - 3)
@@ -239,10 +269,7 @@ def op2_truck_2opt_repair(
         candidate = deepcopy(base)
         candidate["route"] = route[:i] + list(reversed(route[i : j + 1])) + route[j + 1 :]
 
-        if not is_valid(data, candidate, n_drones=n_drones):
-            continue
-
-        objective = evaluate(data, candidate, n_drones=n_drones)
+        objective = score_solution(data, candidate, n_drones=n_drones)
         if objective < best_value:
             best_value = objective
             best_candidate = candidate
@@ -262,58 +289,96 @@ def _trip_criticality(data: Dict[str, Any], route: List[int], trip: Trip) -> flo
     return float(flight + span)
 
 
+def _sample_anchor_pairs(route_len: int, rng: random.Random, max_pairs: int = 18) -> List[Tuple[int, int]]:
+    """Sample candidate launch/reconvene index pairs to cap OP3 runtime."""
+    if route_len < 2:
+        return []
+
+    pairs: Set[Tuple[int, int]] = set()
+
+    # Keep short-span anchors as high-value deterministic candidates.
+    for i in range(route_len - 1):
+        for gap in (1, 2, 3):
+            j = i + gap
+            if j < route_len:
+                pairs.add((i, j))
+
+    # Add random long-span candidates for diversification.
+    target = max_pairs
+    while len(pairs) < target:
+        i = rng.randint(0, route_len - 2)
+        j = rng.randint(i + 1, route_len - 1)
+        pairs.add((i, j))
+
+    return list(pairs)
+
+
 def op3_drone_reassign_best_anchor(data: Dict[str, Any], solution: Solution, rng: random.Random, n_drones: int) -> Solution:
-    """Reassign one drone customer to a better feasible launch/reconvene pair."""
+    """Create/reassign one drone customer with sampled feasible anchor search."""
     base = deepcopy(solution)
-    if not base["trips"]:
-        return base
-
     route = base["route"]
-    scored_trips = [(trip, _trip_criticality(data, route, trip)) for trip in base["trips"]]
-    scored_trips.sort(key=lambda item: item[1], reverse=True)
 
-    candidate_pool = [trip for trip, _ in scored_trips[: min(5, len(scored_trips))]]
-    chosen_trip = rng.choice(candidate_pool)
-    _, customer, _ = chosen_trip
+    # Choose customer source: either reassign an existing drone trip, or create a new drone trip from truck.
+    customer = None
+    removed_from_route = False
+    truck_customers = [node for node in route if node != 0]
+    create_from_truck = bool(truck_customers) and (not base["trips"] or rng.random() < 0.65)
 
-    base["trips"] = [trip for trip in base["trips"] if trip != chosen_trip]
+    if not create_from_truck and base["trips"]:
+        scored_trips = [(trip, _trip_criticality(data, route, trip)) for trip in base["trips"]]
+        scored_trips.sort(key=lambda item: item[1], reverse=True)
+        chosen_trip = rng.choice([trip for trip, _ in scored_trips[: min(5, len(scored_trips))]])
+        _, customer, _ = chosen_trip
+        base["trips"] = [trip for trip in base["trips"] if trip != chosen_trip]
+    else:
+        if not truck_customers:
+            return base
+        detours: List[Tuple[int, float]] = []
+        for idx in range(1, len(route) - 1):
+            c = route[idx]
+            prev_node = route[idx - 1]
+            next_node = route[idx + 1]
+            detour = data["T"][prev_node][c] + data["T"][c][next_node] - data["T"][prev_node][next_node]
+            detours.append((c, detour))
+        detours.sort(key=lambda item: item[1], reverse=True)
+        customer = int(rng.choice([c for c, _ in detours[: min(5, len(detours))]]))
+        if customer in base["route"]:
+            base["route"].remove(customer)
+            removed_from_route = True
 
     best_candidate = deepcopy(solution)
-    best_value = evaluate(data, best_candidate, n_drones=n_drones)
+    best_value = score_solution(data, best_candidate, n_drones=n_drones)
 
-    # Exhaustive anchor-pair search on current truck route.
-    for i in range(0, len(route) - 1):
+    for i, j in _sample_anchor_pairs(len(route), rng, max_pairs=18):
         launch_node = route[i]
-        for j in range(i + 1, len(route)):
-            reconvene_node = route[j]
-            direct_flight = data["D"][launch_node][customer] + data["D"][customer][reconvene_node]
-            if direct_flight > data["drone_limit"]:
-                continue
+        reconvene_node = route[j]
+        direct_flight = data["D"][launch_node][customer] + data["D"][customer][reconvene_node]
+        if direct_flight > data["drone_limit"]:
+            continue
 
-            candidate = deepcopy(base)
-            candidate["trips"].append((launch_node, customer, reconvene_node))
-            if not is_valid(data, candidate, n_drones=n_drones):
-                continue
-
-            objective = evaluate(data, candidate, n_drones=n_drones)
-            if objective < best_value:
-                best_value = objective
-                best_candidate = candidate
-
-    # Fallback: convert chosen drone customer back to truck service.
-    for insert_pos in range(1, len(route)):
         candidate = deepcopy(base)
-        if customer in candidate["route"]:
-            continue
-        candidate["route"].insert(insert_pos, customer)
-
-        if not is_valid(data, candidate, n_drones=n_drones):
-            continue
-
-        objective = evaluate(data, candidate, n_drones=n_drones)
+        candidate["trips"].append((launch_node, customer, reconvene_node))
+        objective = score_solution(data, candidate, n_drones=n_drones)
         if objective < best_value:
             best_value = objective
             best_candidate = candidate
+
+    # If customer came from a drone trip and no better reassignment was found, allow truck reinsertion.
+    if not removed_from_route:
+        positions = list(range(1, len(route)))
+        if len(positions) > 10:
+            positions = rng.sample(positions, 10)
+
+        for insert_pos in positions:
+            candidate = deepcopy(base)
+            if customer in candidate["route"]:
+                continue
+            candidate["route"].insert(insert_pos, customer)
+
+            objective = score_solution(data, candidate, n_drones=n_drones)
+            if objective < best_value:
+                best_value = objective
+                best_candidate = candidate
 
     return best_candidate
 
@@ -345,7 +410,7 @@ def run_modified_simulated_annealing(
     final_temp: float = 0.1,
 ) -> Tuple[Solution, float, float]:
     incumbent = initial_solution(data)
-    incumbent_obj = evaluate(data, incumbent, n_drones=n_drones)
+    incumbent_obj = score_solution(data, incumbent, n_drones=n_drones)
 
     best_solution = deepcopy(incumbent)
     best_obj = incumbent_obj
@@ -362,10 +427,9 @@ def run_modified_simulated_annealing(
             probabilities=probabilities,
         )
 
-        if not is_valid(data, new_solution, n_drones=n_drones):
+        new_obj = score_solution(data, new_solution, n_drones=n_drones)
+        if not math.isfinite(new_obj):
             continue
-
-        new_obj = evaluate(data, new_solution, n_drones=n_drones)
         delta = new_obj - incumbent_obj
 
         if delta < 0:
@@ -400,8 +464,8 @@ def run_modified_simulated_annealing(
             probabilities=probabilities,
         )
 
-        if is_valid(data, new_solution, n_drones=n_drones):
-            new_obj = evaluate(data, new_solution, n_drones=n_drones)
+        new_obj = score_solution(data, new_solution, n_drones=n_drones)
+        if math.isfinite(new_obj):
             delta = new_obj - incumbent_obj
 
             if delta < 0:
@@ -458,7 +522,7 @@ def run_configuration(
             continue
 
         data = read_instance(str(instance_file))
-        initial_obj = evaluate(data, initial_solution(data), n_drones=n_drones)
+        initial_obj = score_solution(data, initial_solution(data), n_drones=n_drones)
 
         run_objs: List[float] = []
         run_times: List[float] = []
