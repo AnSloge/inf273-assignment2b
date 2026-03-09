@@ -802,36 +802,6 @@ def run_configuration(
     return rows, best_solutions
 
 
-def benchmark_average_objective(
-    data: Dict[str, Any],
-    probabilities: Tuple[float, float, float],
-    runs: int,
-    seed: int,
-    warmup_iters: int,
-    main_iters: int,
-    final_temp: float,
-    n_drones: int,
-) -> float:
-    """Compute average best objective over repeated runs for A/B acceptance checks."""
-    objectives: List[float] = []
-    for run_idx in range(runs):
-        rng = random.Random(seed + run_idx)
-        _, objective_value, _ = run_modified_simulated_annealing(
-            data=data,
-            rng=rng,
-            n_drones=n_drones,
-            probabilities=probabilities,
-            warmup_iters=warmup_iters,
-            main_iters=main_iters,
-            final_temp=final_temp,
-        )
-        objectives.append(objective_value)
-
-    if not objectives:
-        return float("inf")
-    return float(sum(objectives) / len(objectives))
-
-
 def select_tuned_weights_for_instance(
     data: Dict[str, Any],
     base_weights: Tuple[float, float, float],
@@ -897,9 +867,6 @@ def main() -> None:
     parser.add_argument("--final-temp", type=float, default=0.1)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--n-drones", type=int, default=2)
-    parser.add_argument("--gate-runs", type=int, default=4)
-    parser.add_argument("--gate-warmup-iters", type=int, default=25)
-    parser.add_argument("--gate-iters", type=int, default=350)
     parser.add_argument("--equal-weights", nargs=3, type=float, default=[1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0])
     parser.add_argument("--tuned-weights", nargs=3, type=float, default=[0.37, 0.47, 0.16])
     parser.add_argument(
@@ -977,54 +944,16 @@ def main() -> None:
                 n_drones=args.n_drones,
             )
 
-        # Large-instance acceptance gate: keep candidate only if it improves over equal baseline.
-        weights_for_tuned_run = tuned_for_instance
-        if instance_name in LARGE_INSTANCE_NAMES:
-            gate_runs = max(1, min(args.gate_runs, args.runs))
-            baseline_avg = benchmark_average_objective(
-                data=data,
-                probabilities=equal_weights,
-                runs=gate_runs,
-                seed=args.seed,
-                warmup_iters=args.gate_warmup_iters,
-                main_iters=args.gate_iters,
-                final_temp=args.final_temp,
-                n_drones=args.n_drones,
-            )
-            candidate_avg = benchmark_average_objective(
-                data=data,
-                probabilities=tuned_for_instance,
-                runs=gate_runs,
-                seed=args.seed,
-                warmup_iters=args.gate_warmup_iters,
-                main_iters=args.gate_iters,
-                final_temp=args.final_temp,
-                n_drones=args.n_drones,
-            )
-
-            if candidate_avg < baseline_avg:
-                print(
-                    f"large-instance gate: ACCEPT candidate "
-                    f"(candidate avg={candidate_avg:.1f} < baseline avg={baseline_avg:.1f})"
-                )
-            else:
-                print(
-                    f"large-instance gate: REJECT candidate "
-                    f"(candidate avg={candidate_avg:.1f} >= baseline avg={baseline_avg:.1f}); "
-                    "using equal weights for tuned run"
-                )
-                weights_for_tuned_run = equal_weights
-
         print("\n" + "=" * 70)
         print(f"{instance_name}-new-operators-tuned-weights")
         print(
-            f"selected (P1,P2,P3)=({weights_for_tuned_run[0]:.2f},{weights_for_tuned_run[1]:.2f},{weights_for_tuned_run[2]:.2f})"
+            f"selected (P1,P2,P3)=({tuned_for_instance[0]:.2f},{tuned_for_instance[1]:.2f},{tuned_for_instance[2]:.2f})"
         )
         print("=" * 70)
 
         rows_tu, best_tu = run_configuration(
             method_name="SA-new operators (tuned weights)",
-            probabilities=weights_for_tuned_run,
+            probabilities=tuned_for_instance,
             data_dir=data_dir,
             instances=[instance_name],
             runs=args.runs,
